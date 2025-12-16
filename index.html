@@ -142,6 +142,32 @@
                 text-shadow: none;
             }
 
+            /* Dot style for large groups */
+            .element-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: var(--card-bg);
+                border: 1px solid var(--card-border);
+                box-shadow: 0px 0px 4px var(--card-shadow);
+                cursor: default;
+                user-select: none;
+                backface-visibility: hidden;
+                transition: all 0.3s ease;
+            }
+
+            .element-dot:hover {
+                box-shadow: 0px 0px 8px var(--card-shadow);
+                border: 1px solid var(--text-glow);
+            }
+
+            .element-dot.winner {
+                background-color: rgba(255, 215, 0, 0.8);
+                box-shadow: 0px 0px 8px rgba(255, 215, 0, 0.8);
+                border: 1px solid rgba(255, 255, 255, 1);
+                z-index: 100;
+            }
+
             /* Custom Scrollbar */
             ::-webkit-scrollbar {
                 width: 8px;
@@ -467,10 +493,35 @@
                             <label class="text-xs text-gray-400"
                                 >奖项名称</label
                             >
+                            <div class="relative">
+                                <select
+                                    v-model="store.config.prizeName"
+                                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-500 w-32 text-white appearance-none cursor-pointer"
+                                    @change="handlePrizeNameChange"
+                                >
+                                    <option value="">请选择奖项</option>
+                                    <option value="特等奖">特等奖</option>
+                                    <option value="一等奖">一等奖</option>
+                                    <option value="二等奖">二等奖</option>
+                                    <option value="三等奖">三等奖</option>
+                                    <option value="幸运奖">幸运奖</option>
+                                    <option value="__custom__">自定义...</option>
+                                </select>
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                </div>
+                            </div>
                             <input
-                                v-model="store.config.prizeName"
+                                v-if="showCustomPrizeInput"
+                                v-model="customPrizeName"
+                                @blur="handleCustomPrizeBlur"
+                                @keyup.enter="handleCustomPrizeEnter"
                                 type="text"
-                                class="bg-gray-800 border border-gray-600 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-500 w-32 text-white placeholder-gray-500"
+                                placeholder="输入自定义奖项名称"
+                                class="bg-gray-800 border border-gray-600 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-500 w-32 text-white placeholder-gray-500 mt-1"
+                                ref="customPrizeInput"
                             />
                         </div>
 
@@ -533,6 +584,20 @@
                                 for="soundEnabled"
                                 class="text-sm cursor-pointer select-none text-gray-300"
                                 >🔊 音效</label
+                            >
+                        </div>
+
+                        <div class="flex items-center gap-2 mb-2 h-8">
+                            <input
+                                v-model="store.config.autoStop"
+                                id="autoStop"
+                                type="checkbox"
+                                class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500"
+                            />
+                            <label
+                                for="autoStop"
+                                class="text-sm cursor-pointer select-none text-gray-300"
+                                >⏰ 自动停止</label
                             >
                         </div>
 
@@ -750,6 +815,7 @@
                 reactive,
                 computed,
                 onMounted,
+                onUnmounted,
                 watch,
                 nextTick,
             } from "https://unpkg.com/vue@3/dist/vue.esm-browser.js";
@@ -798,6 +864,7 @@
                     theme: "theme-cyber",
                     mainTitle: "幸运大抽奖",
                     soundEnabled: true,
+                    autoStop: false,
                 },
                 // UI State
                 isRunning: false,
@@ -1204,31 +1271,91 @@
                 const count = users.length;
                 const vector = new THREE.Vector3();
 
-                // Optimized radius for density
-                // Base radius 450, grows with square root of count to maintain surface density
-                const radius = Math.max(450, Math.sqrt(count) * 65);
+                // Dynamic radius and card size based on participant count
+                let radius, cardScale, showFullCards, performanceMode;
+                
+                if (count < 200) {
+                    // Small groups: current behavior
+                    radius = Math.max(450, Math.sqrt(count) * 65);
+                    cardScale = 1;
+                    showFullCards = true;
+                    performanceMode = false;
+                } else if (count < 1000) {
+                    // Medium groups: smaller cards
+                    radius = Math.max(450, Math.sqrt(count) * 65);
+                    cardScale = 0.7;
+                    showFullCards = true;
+                    performanceMode = false;
+                } else if (count < 10000) {
+                    // Large groups: dots with some full cards
+                    radius = Math.max(450, Math.sqrt(count) * 65);
+                    cardScale = 0.3;
+                    showFullCards = false;
+                    performanceMode = false;
+                } else {
+                    // Very large groups: performance optimization
+                    radius = Math.max(450, Math.sqrt(count) * 65);
+                    cardScale = 0.2;
+                    showFullCards = false;
+                    performanceMode = true;
+                }
+
+                // Calculate how many full cards to show for large groups
+                let fullCardCount = 0;
+                if (!showFullCards) {
+                    if (count < 10000) {
+                        // For 1000-10000 people: show 2% or max 100 full cards
+                        fullCardCount = Math.min(100, Math.floor(count * 0.02));
+                    } else {
+                        // For 10000+ people: show 0.5% or max 50 full cards
+                        fullCardCount = Math.min(50, Math.floor(count * 0.005));
+                    }
+                }
 
                 for (let i = 0; i < count; i++) {
                     const user = users[i];
-
+                    
+                    // Determine if this should be a full card or dot
+                    let isFullCard;
+                    if (showFullCards) {
+                        // For small and medium groups, show all as full cards
+                        isFullCard = true;
+                    } else {
+                        // For large groups, show only some as full cards
+                        isFullCard = i < fullCardCount;
+                    }
+                    
                     const element = document.createElement("div");
-                    element.className = "element";
-                    if (user.status === 1) element.classList.add("winner");
+                    
+                    if (isFullCard) {
+                        element.className = "element";
+                        if (user.status === 1) element.classList.add("winner");
 
-                    const number = document.createElement("div");
-                    number.className = "number";
-                    number.textContent = i + 1;
-                    element.appendChild(number);
+                        const number = document.createElement("div");
+                        number.className = "number";
+                        number.textContent = i + 1;
+                        element.appendChild(number);
 
-                    const symbol = document.createElement("div");
-                    symbol.className = "symbol";
-                    symbol.textContent = user.name;
-                    element.appendChild(symbol);
+                        const symbol = document.createElement("div");
+                        symbol.className = "symbol";
+                        symbol.textContent = user.name;
+                        element.appendChild(symbol);
 
-                    const details = document.createElement("div");
-                    details.className = "details";
-                    details.textContent = user.info || "";
-                    element.appendChild(details);
+                        const details = document.createElement("div");
+                        details.className = "details";
+                        details.textContent = user.info || "";
+                        element.appendChild(details);
+                    } else {
+                        // Show as small dot
+                        element.className = "element-dot";
+                        if (user.status === 1) element.classList.add("winner");
+                        element.style.width = "8px";
+                        element.style.height = "8px";
+                        element.style.borderRadius = "50%";
+                        element.style.backgroundColor = user.status === 1 ? "rgba(255, 215, 0, 0.8)" : "var(--card-bg)";
+                        element.style.border = "1px solid var(--card-border)";
+                        element.style.boxShadow = "0px 0px 4px var(--card-shadow)";
+                    }
 
                     const objectCSS = new CSS3DObject(element);
 
@@ -1263,6 +1390,11 @@
                     rotationMatrix.makeBasis(right, correctedUp, forward);
                     objectCSS.quaternion.setFromRotationMatrix(rotationMatrix);
 
+                    // Apply dynamic scaling based on participant count
+                    if (cardScale !== 1) {
+                        objectCSS.scale.setScalar(cardScale);
+                    }
+
                     group.add(objectCSS);
                 }
             }
@@ -1273,6 +1405,12 @@
                 if (group) {
                     if (isVisualRunning) {
                         group.rotation.y += 0.05;
+                        
+                        // Pulsing scale animation for the sphere
+                        const time = Date.now() * 0.003;
+                        const scale = 1 + Math.sin(time) * 0.15; // Oscillate between 0.85 and 1.15
+                        group.scale.setScalar(scale);
+                        
                         // Smooth Zoom In
                         camera.position.z = THREE.MathUtils.lerp(
                             camera.position.z,
@@ -1290,6 +1428,10 @@
                         if (autoRotate && !isDragging) {
                             group.rotation.y += 0.002;
                         }
+                        
+                        // Reset scale to normal
+                        group.scale.setScalar(1);
+                        
                         // Smooth Zoom Out
                         camera.position.z = THREE.MathUtils.lerp(
                             camera.position.z,
@@ -1309,6 +1451,7 @@
                     const showSettings = ref(false);
                     const showAlgoInfo = ref(false);
                     const manualInput = ref("");
+                    const autoStopTimer = ref(null); // Track auto-stop timer
 
                     // -- Computed for UI --
                     const winnerStats = computed(() => {
@@ -1337,6 +1480,13 @@
                         if (store.isRunning) {
                             // Stop
                             stopSpinSound();
+                            
+                            // Clear auto-stop timer if exists
+                            if (autoStopTimer.value) {
+                                clearTimeout(autoStopTimer.value);
+                                autoStopTimer.value = null;
+                            }
+                            
                             const result = performDraw();
                             if (!result.success) {
                                 alert(result.message);
@@ -1362,6 +1512,15 @@
                             playSpinSound();
                             // Clear current winners display when starting new draw
                             store.currentWinners = [];
+                            
+                            // Set auto-stop timer if enabled
+                            if (store.config.autoStop) {
+                                autoStopTimer.value = setTimeout(() => {
+                                    if (store.isRunning) {
+                                        toggleRunning(); // Auto-stop after 5 seconds
+                                    }
+                                }, 5000); // 5 seconds
+                            }
                         }
                     };
 
@@ -1728,6 +1887,14 @@
                         });
                     });
 
+                    // Cleanup auto-stop timer on unmount
+                    onUnmounted(() => {
+                        if (autoStopTimer.value) {
+                            clearTimeout(autoStopTimer.value);
+                            autoStopTimer.value = null;
+                        }
+                    });
+
                     // Watchers
                     watch(
                         () => store.users,
@@ -1746,12 +1913,51 @@
                         { immediate: true },
                     );
 
+                    // -- Prize Name Selection --
+                    const showCustomPrizeInput = ref(false);
+                    const customPrizeName = ref("");
+
+                    const handlePrizeNameChange = () => {
+                        if (store.config.prizeName === "__custom__") {
+                            showCustomPrizeInput.value = true;
+                            // Reset the prize name to empty for custom input
+                            store.config.prizeName = "";
+                            // Focus the custom input after DOM update
+                            setTimeout(() => {
+                                const input = document.querySelector('input[placeholder="输入自定义奖项名称"]');
+                                if (input) input.focus();
+                            }, 0);
+                        } else {
+                            showCustomPrizeInput.value = false;
+                            customPrizeName.value = "";
+                        }
+                    };
+
+                    const handleCustomPrizeBlur = () => {
+                        if (customPrizeName.value.trim()) {
+                            store.config.prizeName = customPrizeName.value.trim();
+                        }
+                        showCustomPrizeInput.value = false;
+                        customPrizeName.value = "";
+                    };
+
+                    const handleCustomPrizeEnter = () => {
+                        if (customPrizeName.value.trim()) {
+                            store.config.prizeName = customPrizeName.value.trim();
+                            showCustomPrizeInput.value = false;
+                            customPrizeName.value = "";
+                        }
+                    };
+
                     return {
                         store,
                         showSidebar,
                         showSettings,
                         showAlgoInfo,
                         manualInput,
+                        autoStopTimer,
+                        showCustomPrizeInput,
+                        customPrizeName,
                         winnerStats,
                         toggleSidebar,
                         toggleRunning,
@@ -1763,6 +1969,9 @@
                         handleClearHistory,
                         handleExportHistory,
                         handleScreenshot,
+                        handlePrizeNameChange,
+                        handleCustomPrizeBlur,
+                        handleCustomPrizeEnter,
                         toggleSound: () => {
                             soundEnabled = store.config.soundEnabled;
                         },
