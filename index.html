@@ -117,6 +117,18 @@
                 padding: 0 5px;
             }
 
+            .element .company {
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--text-sub);
+                text-shadow: 0 0 5px var(--text-glow);
+                word-break: break-all;
+                padding: 0 5px;
+                margin-bottom: 5px;
+                border-bottom: 1px solid var(--card-border);
+                padding-bottom: 3px;
+            }
+
             .element .details {
                 font-size: 12px;
                 color: var(--text-sub);
@@ -601,6 +613,18 @@
                             >
                         </div>
 
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-400"
+                                >企业名称</label
+                            >
+                            <input
+                                v-model="store.config.companyName"
+                                type="text"
+                                placeholder="显示在卡片顶部（可选）"
+                                class="bg-gray-800 border border-gray-600 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-500 w-32 text-white placeholder-gray-500"
+                            />
+                        </div>
+
                         <div class="flex gap-2">
                             <button
                                 @click="toggleRunning"
@@ -865,6 +889,7 @@
                     mainTitle: "幸运大抽奖",
                     soundEnabled: true,
                     autoStop: false,
+                    companyName: "", // 企业名称，可选显示
                 },
                 // UI State
                 isRunning: false,
@@ -1336,6 +1361,14 @@
                         number.textContent = i + 1;
                         element.appendChild(number);
 
+                        // Add company name if configured
+                        if (store.config.companyName && store.config.companyName.trim()) {
+                            const company = document.createElement("div");
+                            company.className = "company";
+                            company.textContent = store.config.companyName.trim();
+                            element.appendChild(company);
+                        }
+
                         const symbol = document.createElement("div");
                         symbol.className = "symbol";
                         symbol.textContent = user.name;
@@ -1524,6 +1557,8 @@
                         }
                     };
 
+
+
                     const closeWinnersModal = () => {
                         store.currentWinners = [];
                     };
@@ -1673,22 +1708,46 @@
 
                     const handleScreenshot = async () => {
                         try {
-                            // Capture screenshot directly without loading overlay
-                            const canvas = await html2canvas(document.body, {
-                                useCORS: true,
-                                allowTaint: true,
-                                backgroundColor: null,
-                                scale: window.devicePixelRatio || 1,
-                                logging: false,
-                                imageTimeout: 0,
-                                onclone: (clonedDoc) => {
-                                    // Ensure cloned document has proper background
-                                    clonedDoc.body.style.backgroundColor =
-                                        getComputedStyle(
-                                            document.body,
-                                        ).backgroundColor;
-                                },
-                            });
+                            // Show loading indicator
+                            const loadingToast = document.createElement("div");
+                            loadingToast.style.cssText =
+                                "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:99999;background:#3b82f6;color:white;padding:12px 24px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);";
+                            loadingToast.textContent = "📸 正在生成Canvas截图...";
+                            document.body.appendChild(loadingToast);
+
+                            // Store current animation state
+                            const wasRunning = isVisualRunning;
+                            
+                            // Temporarily stop animations for consistent screenshot
+                            isVisualRunning = false;
+                            
+                            // Wait for animations to stabilize
+                            await new Promise(resolve => setTimeout(resolve, 200));
+
+                            // Create high-quality canvas
+                            const scale = Math.min(window.devicePixelRatio || 1, 2);
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            canvas.width = window.innerWidth * scale;
+                            canvas.height = window.innerHeight * scale;
+                            ctx.scale(scale, scale);
+                            
+                            // Try Canvas API first, fallback to enhanced html2canvas if needed
+                            loadingToast.textContent = "📸 正在渲染Canvas场景...";
+                            try {
+                                await renderCanvasScreenshot(ctx, scale);
+                            } catch (canvasError) {
+                                console.warn('Canvas API failed, falling back to html2canvas:', canvasError);
+                                loadingToast.textContent = "📸 Canvas失败，使用备选方案...";
+                                await fallbackHtml2CanvasScreenshot(ctx, scale);
+                            }
+
+                            // Restore animation state
+                            isVisualRunning = wasRunning;
+                            
+                            // Clean up loading toast
+                            loadingToast.remove();
 
                             // Convert to blob and download
                             canvas.toBlob(
@@ -1704,8 +1763,7 @@
 
                                     // Generate filename with timestamp
                                     const now = new Date();
-                                    const pad = (n) =>
-                                        n.toString().padStart(2, "0");
+                                    const pad = (n) => n.toString().padStart(2, "0");
                                     const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
                                     link.download = `抽奖截图_${ts}.png`;
 
@@ -1721,16 +1779,419 @@
                                     const toast = document.createElement("div");
                                     toast.style.cssText =
                                         "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:99999;background:#22c55e;color:white;padding:12px 24px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);";
-                                    toast.textContent = "✅ 截图已保存";
+                                    toast.textContent = "✅ Canvas截图已保存";
                                     document.body.appendChild(toast);
                                     setTimeout(() => toast.remove(), 2000);
                                 },
                                 "image/png",
-                                1.0,
+                                0.95,
                             );
                         } catch (e) {
-                            console.error("Screenshot error:", e);
-                            alert("截图失败: " + e.message);
+                            console.error("Canvas screenshot error:", e);
+                            alert("Canvas截图失败: " + e.message);
+                            
+                            // Clean up loading toast if it exists
+                            const loadingToast = document.querySelector('div[style*="正在生成Canvas截图"]');
+                            if (loadingToast) loadingToast.remove();
+                            
+                            // Restore animation state in case of error
+                            isVisualRunning = store.isRunning;
+                        }
+                    };
+
+                    // Canvas API-based screenshot rendering
+                    const renderCanvasScreenshot = async (ctx, scale) => {
+                        try {
+                            // 1. Draw background
+                            const bgColor = getComputedStyle(document.body).backgroundColor;
+                            ctx.fillStyle = bgColor || '#000000';
+                            ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+                            
+                            // 2. Draw sidebar (left panel)
+                            await drawSidebar(ctx);
+                            
+                            // 3. Draw 3D scene with enhanced error handling
+                            await draw3DScene(ctx);
+                            
+                            // 4. Draw main content and UI elements
+                            await drawMainContent(ctx);
+                            
+                            // 5. Draw overlay elements
+                            await drawOverlays(ctx);
+                            
+                        } catch (error) {
+                            console.error('Canvas screenshot rendering failed:', error);
+                            
+                            // Fallback: draw a simple error message
+                            ctx.fillStyle = '#ff0000';
+                            ctx.font = 'bold 24px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('Screenshot Error: ' + error.message, window.innerWidth / 2, window.innerHeight / 2);
+                            ctx.textAlign = 'left';
+                            
+                            throw error;
+                        }
+                    };
+
+                    // Draw the sidebar with all content
+                    const drawSidebar = async (ctx) => {
+                        const sidebar = document.querySelector('#app > div:first-child');
+                        if (!sidebar) return;
+                        
+                        const rect = sidebar.getBoundingClientRect();
+                        const sidebarWidth = 640; // Fixed width
+                        
+                        // Draw sidebar background
+                        ctx.fillStyle = '#1f2937'; // bg-gray-800
+                        ctx.fillRect(0, 0, sidebarWidth, window.innerHeight);
+                        
+                        // Draw border
+                        ctx.strokeStyle = '#374151'; // border-gray-700
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(sidebarWidth - 1, 0, 1, window.innerHeight);
+                        
+                        // Draw header
+                        ctx.fillStyle = '#fbbf24'; // text-yellow-400
+                        ctx.font = 'bold 20px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                        ctx.textAlign = 'left';
+                        ctx.fillText('🏆 中奖记录', 16, 32);
+                        
+                        // Draw stats dashboard
+                        const statsY = 60;
+                        ctx.fillStyle = '#6b7280'; // text-gray-400
+                        ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                        
+                        // Total users
+                        ctx.fillText('总人数', 16, statsY);
+                        ctx.fillStyle = '#3b82f6'; // text-blue-400
+                        ctx.font = 'bold 18px "Courier New", monospace';
+                        ctx.fillText(store.users.length.toString(), 16, statsY + 20);
+                        
+                        // Winners
+                        const winners = store.users.filter(u => u.status === 1).length;
+                        ctx.fillStyle = '#6b7280';
+                        ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                        ctx.fillText('已中奖', 120, statsY);
+                        ctx.fillStyle = '#fbbf24'; // text-yellow-400
+                        ctx.font = 'bold 18px "Courier New", monospace';
+                        ctx.fillText(winners.toString(), 120, statsY + 20);
+                        
+                        // Win rate
+                        const winRate = store.users.length > 0 ? ((winners / store.users.length) * 100).toFixed(1) : '0.0';
+                        ctx.fillStyle = '#6b7280';
+                        ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                        ctx.fillText('中奖率', 224, statsY);
+                        ctx.fillStyle = '#10b981'; // text-green-400
+                        ctx.font = 'bold 18px "Courier New", monospace';
+                        ctx.fillText(winRate + '%', 224, statsY + 20);
+                        
+                        // Draw history records
+                        let currentY = statsY + 50;
+                        if (store.history.length === 0) {
+                            ctx.fillStyle = '#6b7280';
+                            ctx.font = '14px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('暂无中奖记录', sidebarWidth / 2, currentY + 100);
+                            ctx.textAlign = 'left';
+                        } else {
+                            store.history.forEach((record, idx) => {
+                                // Draw record background
+                                ctx.fillStyle = '#374151'; // bg-gray-800
+                                ctx.fillRect(8, currentY, sidebarWidth - 16, 60);
+                                
+                                // Draw prize name
+                                ctx.fillStyle = '#fbbf24'; // text-yellow-500
+                                ctx.font = 'bold 14px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                                ctx.fillText(record.prizeName, 16, currentY + 20);
+                                
+                                // Draw time
+                                ctx.fillStyle = '#9ca3af'; // text-gray-400
+                                ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                                ctx.textAlign = 'right';
+                                ctx.fillText(record.time, sidebarWidth - 16, currentY + 20);
+                                
+                                // Draw seed if exists
+                                if (record.seed) {
+                                    ctx.fillStyle = '#6b7280';
+                                    ctx.font = '10px "Courier New", monospace';
+                                    ctx.fillText('Seed: ' + record.seed, sidebarWidth - 16, currentY + 35);
+                                }
+                                
+                                // Draw winners
+                                ctx.textAlign = 'left';
+                                ctx.fillStyle = '#d1d5db'; // text-white
+                                ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                                
+                                let winnerX = 16;
+                                record.winners.forEach((winner, winnerIdx) => {
+                                    const winnerText = winner.name;
+                                    const textWidth = ctx.measureText(winnerText).width;
+                                    
+                                    // Draw winner badge
+                                    ctx.fillStyle = '#4b5563'; // bg-gray-700
+                                    ctx.fillRect(winnerX, currentY + 40, textWidth + 16, 20);
+                                    
+                                    ctx.fillStyle = '#ffffff';
+                                    ctx.fillText(winnerText, winnerX + 8, currentY + 53);
+                                    
+                                    winnerX += textWidth + 24;
+                                });
+                                
+                                currentY += 70;
+                            });
+                        }
+                    };
+
+                    // Draw the 3D scene
+                    const draw3DScene = async (ctx) => {
+                        // Check if renderer and canvas are valid
+                        if (!renderer || !renderer.domElement) {
+                            console.warn('3D renderer not available for screenshot');
+                            return;
+                        }
+                        
+                        const canvas = renderer.domElement;
+                        
+                        // Ensure canvas is ready and has valid dimensions
+                        if (canvas.width === 0 || canvas.height === 0) {
+                            console.warn('3D renderer canvas has invalid dimensions');
+                            return;
+                        }
+                        
+                        const mainContent = document.querySelector('#app > div:last-child');
+                        if (!mainContent) {
+                            console.warn('Main content not found for screenshot');
+                            return;
+                        }
+                        
+                        const rect = mainContent.getBoundingClientRect();
+                        
+                        try {
+                            // Create a temporary canvas to ensure we have a valid image source
+                            const tempCanvas = document.createElement('canvas');
+                            const tempCtx = tempCanvas.getContext('2d');
+                            
+                            tempCanvas.width = canvas.width;
+                            tempCanvas.height = canvas.height;
+                            
+                            // Copy the original canvas content
+                            tempCtx.drawImage(canvas, 0, 0);
+                            
+                            // Now draw the copied content to our main canvas
+                            ctx.drawImage(tempCanvas, rect.left, rect.top, rect.width, rect.height);
+                            
+                        } catch (error) {
+                            console.error('Failed to draw 3D scene to canvas:', error);
+                            // Fallback: draw a placeholder rectangle
+                            ctx.fillStyle = '#1f2937';
+                            ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+                            ctx.fillStyle = '#6b7280';
+                            ctx.font = '16px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('3D Scene (Screenshot Error)', rect.left + rect.width / 2, rect.top + rect.height / 2);
+                            ctx.textAlign = 'left';
+                        }
+                        
+                        // Draw main title if visible
+                        const title = document.querySelector('h1');
+                        if (title && title.offsetParent !== null) {
+                            const titleRect = title.getBoundingClientRect();
+                            ctx.fillStyle = getComputedStyle(title).color || '#ffffff';
+                            ctx.font = 'bold 72px "Microsoft YaHei", sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText(title.textContent, titleRect.left + titleRect.width / 2, titleRect.top + titleRect.height / 2);
+                            ctx.textAlign = 'left';
+                        }
+                    };
+
+                    // Draw main content and controls
+                    const drawMainContent = async (ctx) => {
+                        // Draw configuration panel
+                        const configPanel = document.querySelector('.bg-gray-900\\/90.backdrop-blur-md');
+                        if (configPanel) {
+                            const rect = configPanel.getBoundingClientRect();
+                            
+                            // Panel background
+                            ctx.fillStyle = 'rgba(17, 24, 39, 0.9)';
+                            ctx.fillRect(rect.left, rect.bottom - 80, rect.width, 80);
+                            
+                            // Panel border
+                            ctx.strokeStyle = '#374151';
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(rect.left, rect.bottom - 80, rect.width, 80);
+                            
+                            // Draw control elements
+                            ctx.fillStyle = '#9ca3af';
+                            ctx.font = '12px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            
+                            // Prize name
+                            ctx.fillText('奖项名称: ' + (store.config.prizeName || '三等奖'), rect.left + 20, rect.bottom - 50);
+                            
+                            // Count
+                            ctx.fillText('抽取数量: ' + store.config.count, rect.left + 150, rect.bottom - 50);
+                            
+                            // Seed
+                            ctx.fillText('随机种子: ' + store.config.seed, rect.left + 280, rect.bottom - 50);
+                            
+                            // Settings
+                            ctx.fillText('排除已中奖: ' + (store.config.exclude ? '是' : '否'), rect.left + 20, rect.bottom - 25);
+                            ctx.fillText('音效: ' + (store.config.soundEnabled ? '开启' : '关闭'), rect.left + 150, rect.bottom - 25);
+                            ctx.fillText('自动停止: ' + (store.config.autoStop ? '开启' : '关闭'), rect.left + 280, rect.bottom - 25);
+                            
+                            // Company name
+                            if (store.config.companyName && store.config.companyName.trim()) {
+                                ctx.fillText('企业名称: ' + store.config.companyName.trim(), rect.left + 450, rect.bottom - 25);
+                            }
+                        }
+                    };
+
+                    // Fallback html2canvas screenshot
+                    const fallbackHtml2CanvasScreenshot = async (ctx, scale) => {
+                        try {
+                            // Temporarily fix sidebar positioning
+                            const sidebar = document.querySelector('#app > div:first-child');
+                            const originalClasses = sidebar.className;
+                            const originalStyles = {
+                                position: sidebar.style.position,
+                                transform: sidebar.style.transform,
+                                zIndex: sidebar.style.zIndex,
+                                width: sidebar.style.width
+                            };
+                            
+                            // Force sidebar to be visible and properly positioned
+                            sidebar.className = originalClasses.replace(/translate-x-\w+/g, 'translate-x-0');
+                            sidebar.style.position = 'relative';
+                            sidebar.style.transform = 'none';
+                            sidebar.style.zIndex = '20';
+                            sidebar.style.width = '640px';
+                            
+                            // Wait for DOM updates
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                            
+                            // Generate screenshot with html2canvas
+                            const html2canvasCanvas = await html2canvas(document.body, {
+                                useCORS: true,
+                                allowTaint: true,
+                                backgroundColor: null,
+                                scale: scale,
+                                logging: false,
+                                imageTimeout: 0,
+                                width: window.innerWidth,
+                                height: window.innerHeight,
+                                scrollX: 0,
+                                scrollY: 0,
+                                windowWidth: window.innerWidth,
+                                windowHeight: window.innerHeight,
+                                onclone: (clonedDoc) => {
+                                    // Fix background
+                                    clonedDoc.body.style.backgroundColor = getComputedStyle(document.body).backgroundColor;
+                                    
+                                    // Fix sidebar in cloned document
+                                    const clonedSidebar = clonedDoc.querySelector('#app > div:first-child');
+                                    if (clonedSidebar) {
+                                        clonedSidebar.style.position = 'relative';
+                                        clonedSidebar.style.transform = 'none';
+                                        clonedSidebar.style.zIndex = '20';
+                                        clonedSidebar.style.width = '640px';
+                                        clonedSidebar.className = clonedSidebar.className.replace(/translate-x-\w+/g, 'translate-x-0');
+                                    }
+                                    
+                                    // Fix 3D renderer
+                                    const clonedRenderer = clonedDoc.querySelector('canvas');
+                                    if (clonedRenderer) {
+                                        clonedRenderer.style.position = 'absolute';
+                                        clonedRenderer.style.top = '0';
+                                        clonedRenderer.style.left = '0';
+                                        clonedRenderer.style.width = '100%';
+                                        clonedRenderer.style.height = '100%';
+                                        clonedRenderer.style.zIndex = '1';
+                                    }
+                                },
+                            });
+                            
+                            // Draw the html2canvas result to our composite canvas
+                            ctx.drawImage(html2canvasCanvas, 0, 0, window.innerWidth, window.innerHeight);
+                            
+                        } catch (error) {
+                            console.error('Fallback html2canvas also failed:', error);
+                            
+                            // Final fallback: draw error message
+                            ctx.fillStyle = '#ff6b6b';
+                            ctx.font = 'bold 20px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('截图功能暂时不可用', window.innerWidth / 2, window.innerHeight / 2);
+                            ctx.fillStyle = '#666';
+                            ctx.font = '14px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.fillText('请稍后重试或使用浏览器截图功能', window.innerWidth / 2, window.innerHeight / 2 + 30);
+                            ctx.textAlign = 'left';
+                            
+                            throw error;
+                        } finally {
+                            // Restore original sidebar state
+                            if (sidebar) {
+                                sidebar.className = originalClasses;
+                                Object.assign(sidebar.style, originalStyles);
+                            }
+                        }
+                    };
+
+                    // Draw overlay elements
+                    const drawOverlays = async (ctx) => {
+                        // Draw winners modal if visible
+                        if (store.currentWinners.length > 0 && !store.isRunning) {
+                            // Overlay background
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                            ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+                            
+                            // Modal background
+                            const modalWidth = 600;
+                            const modalHeight = 400;
+                            const modalX = (window.innerWidth - modalWidth) / 2;
+                            const modalY = (window.innerHeight - modalHeight) / 2;
+                            
+                            ctx.fillStyle = '#1f2937';
+                            ctx.fillRect(modalX, modalY, modalWidth, modalHeight);
+                            
+                            ctx.strokeStyle = '#374151';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(modalX, modalY, modalWidth, modalHeight);
+                            
+                            // Title
+                            ctx.fillStyle = '#fbbf24';
+                            ctx.font = 'bold 48px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('🎉 恭喜中奖 🎉', window.innerWidth / 2, modalY + 80);
+                            
+                            // Winners
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = 'bold 24px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                            
+                            store.currentWinners.forEach((winner, idx) => {
+                                const winnerY = modalY + 150 + idx * 40;
+                                ctx.fillText(winner.name, window.innerWidth / 2, winnerY);
+                                
+                                if (winner.info) {
+                                    ctx.fillStyle = '#fbbf24';
+                                    ctx.font = '16px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                                    ctx.fillText(winner.info, window.innerWidth / 2, winnerY + 25);
+                                    ctx.fillStyle = '#ffffff';
+                                    ctx.font = 'bold 24px "Helvetica Neue", Helvetica, Arial, sans-serif';
+                                }
+                            });
+                            
+                            ctx.textAlign = 'left';
+                        }
+                        
+                        // Draw theme indicator
+                        const themeIndicator = document.querySelector('.absolute.top-4.right-4');
+                        if (themeIndicator) {
+                            const rect = themeIndicator.getBoundingClientRect();
+                            ctx.fillStyle = 'rgba(17, 24, 39, 0.8)';
+                            ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+                            
+                            ctx.strokeStyle = '#4b5563';
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
                         }
                     };
 
@@ -1816,7 +2277,7 @@
                                 const resizer = document.createElement("div");
                                 resizer.style.cssText =
                                     "position:absolute; top:0; right:0; width:8px; height:100%; cursor:col-resize; z-index:50; background:rgba(255,255,255,0.05); transition:background 0.2s;";
-                                resizer.title = "拖动调整宽度";
+                                resizer.title = "拖动调整宽度 (最小50px)";
                                 resizer.addEventListener(
                                     "mouseover",
                                     () =>
@@ -1836,7 +2297,7 @@
                                 const onMouseMove = (e) => {
                                     if (!isResizing) return;
                                     const newWidth = Math.max(
-                                        300,
+                                        50, // Minimum width reduced to 50px
                                         Math.min(
                                             e.clientX,
                                             window.innerWidth - 400,
